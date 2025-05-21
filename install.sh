@@ -196,8 +196,8 @@ install-cni() {
   else
     print_info "Installing Flannel as primary CNI ..."
     kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
-    timer-sec 10
-    kubectl wait pods -n kube-flannel  -l app=flannel --for condition=Ready --timeout=120s
+    #timer-sec 10
+    #kubectl wait pods -n kube-flannel  -l app=flannel --for condition=Ready --timeout=120s
   fi
 }
 
@@ -207,9 +207,7 @@ install-multus() {
     print_info "Multus is already running. Skipping installation."
   else
     print_info "Installing Multus as meta CNI ..."
-    git -C build/multus-cni pull || git clone https://github.com/k8snetworkplumbingwg/multus-cni.git build/multus-cni
-    cd build/multus-cni
-    cat ./deployments/multus-daemonset-thick.yml | kubectl apply -f -
+    cat multus-daemonset.yml | kubectl apply -f -
     timer-sec 10
     kubectl wait pods -n kube-system  -l app=multus --for condition=Ready --timeout=120s
     cd $WORKING_DIR
