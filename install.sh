@@ -22,8 +22,6 @@ print_info() {
     echo -e "\e[1;33mINFO: $1\e[0m"
 }
 
-
-
 check-root(){
   if [[ $EUID -eq 0 ]]; then
   echo "This script must NOT be run as root" 1>&2
@@ -71,34 +69,47 @@ disable-firewall() {
 # Based on https://docs.docker.com/engine/install/ubuntu/
 # Fixme: If containerd is not running with proper settings, it just checks if containerd is there and exits.
 install-containerd() {
-  if [ -x "$(command -v containerd)" ]
-  then
-          print_info "Containerd is already installed."
-  else
-          echo "Installing containerd ..."
-          # Add Docker's official GPG key:
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl gnupg
-          sudo install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-          sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-          # Add the repository to Apt sources:
-          echo \
-            "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-            "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-          sudo apt-get update
-          sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-          sudo mkdir -p /etc/containerd
-          yes | sudo bash -c 'containerd config default > /etc/containerd/config.toml'
-          sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-          sudo systemctl enable containerd
-          sudo systemctl restart containerd
+  if [ -x "$(command -v containerd)" ]; then
+    print_info "Containerd is already installed."
+    print_info "Uninstalling containerd ..."
+    sudo systemctl stop containerd
+    sudo apt-get remove --purge -y containerd.io docker-ce docker-ce-cli
+    sudo rm -rf /etc/containerd
+    print_success "Containerd and related packages have been uninstalled."
   fi
+  
+  echo "Installing containerd ..."
+  
+  # Add Docker's official GPG key and repository
+  sudo apt-get update
+  sudo apt-get install -y ca-certificates curl gnupg
+  sudo install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+  sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-  # Check if Containerd is running
+  echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+  sudo apt-get update
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  # Generate default containerd config
+  sudo mkdir -p /etc/containerd
+  yes | sudo bash -c 'containerd config default > /etc/containerd/config.toml'
+
+  # Set SystemdCgroup to true
+  sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+  # Change overlayfs to native in two places
+  sudo sed -i 's/\(snapshotter *= *\)"overlayfs"/\1"native"/g' /etc/containerd/config.toml
+
+  # Restart containerd
+  sudo systemctl enable containerd
+  sudo systemctl restart containerd
+
+  # Check if containerd is running
   if sudo systemctl is-active containerd &> /dev/null; then
     print_success "Containerd is running :)"
   else
@@ -198,7 +209,7 @@ install-multus() {
     print_info "Installing Multus as meta CNI ..."
     git -C build/multus-cni pull || git clone https://github.com/k8snetworkplumbingwg/multus-cni.git build/multus-cni
     cd build/multus-cni
-    cat ./deployments/multus-daemonset.yml | kubectl apply -f -
+    cat ./deployments/multus-daemonset-thick.yml | kubectl apply -f -
     timer-sec 10
     kubectl wait pods -n kube-system  -l app=multus --for condition=Ready --timeout=120s
     cd $WORKING_DIR
@@ -393,5 +404,17 @@ run_post_installation() {
     ./increase-fsnotify-limits.sh
 }
 
+run_cpu_optimization() {
+  print_subheader "Applying CPU Optimization"
+  print_info "Installing cpufrequtils ..."
+  sudo apt install cpufrequtils -y
+  print_info "Applying CPU Optimization ..."
+  for ((i=0;i<$(nproc);i++)); do sudo cpufreq-set -c $i -r -g performance; done
+  sudo sysctl -w net.core.wmem_max=62500000
+  sudo sysctl -w net.core.rmem_max=62500000
+  sudo sysctl -w net.core.wmem_default=62500000
+  sudo sysctl -w net.core.rmem_default=62500000
+  sudo ethtool -G ens2f1 tx 4096 rx 4096
+}
 
 main "$@"
