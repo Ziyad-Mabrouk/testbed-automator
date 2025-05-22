@@ -357,6 +357,10 @@ setup_master_node() {
 }
 
 prepare_node_for_kubernetes() {
+    print_subheader "Optimize the machine"
+    run_optimization
+    print_success "Machine Optimized."
+
     print_subheader "Install System Packages"
     install-packages
     print_success "System packages installed."
@@ -402,17 +406,27 @@ run_post_installation() {
     ./increase-fsnotify-limits.sh
 }
 
-run_cpu_optimization() {
+run_optimization() {
   print_subheader "Applying CPU Optimization"
   print_info "Installing cpufrequtils ..."
   sudo apt install cpufrequtils -y
   print_info "Applying CPU Optimization ..."
   for ((i=0;i<$(nproc);i++)); do sudo cpufreq-set -c $i -r -g performance; done
-  sudo sysctl -w net.core.wmem_max=62500000
-  sudo sysctl -w net.core.rmem_max=62500000
-  sudo sysctl -w net.core.wmem_default=62500000
+  sudo sysctl -w net.core.rmem_default=134217728
+  sudo sysctl -w net.core.rmem_max=134217728
+  sudo sysctl -w net.core.wmem_default=134217728
+  sudo sysctl -w net.core.wmem_max=134217728
   sudo sysctl -w net.core.rmem_default=62500000
-  sudo ethtool -G ens2f1 tx 4096 rx 4096
+  sudo sysctl -w net.core.netdev_max_backlog=5000
+  sudo sysctl -w net.core.optmem_max=524288
+  print_info "Increasing ring buffers on the NIC connected to N3XX RRUs ..."
+  sudo ethtool -G ens2f1 tx 8192 rx 8192
+  print_info "Checking throughput-performance profile"
+  tuned-adm profile
+  sysctl kernel.sched_rt_runtime_us=-1
+  echo -1 > /proc/sys/kernel/sched_rt_runtime_us
+  sysctl kernel.timer_migration=0
+  echo 0 > /proc/sys/kernel/timer_migration
 }
 
 main "$@"
